@@ -3,6 +3,10 @@
   A programmable midi Drumset with midi effects
   based on the Teensy 3.2
 
+  Code is based on oddson's multi-pin extension of Paul Stoffregen's
+  Piezo trigger code (teensy examples)
+  
+  The curveApply function is basically a copy of Rob Tillaart's multiMap function
   XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 
 
