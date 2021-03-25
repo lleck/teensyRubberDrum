@@ -28,10 +28,10 @@ const int velTrig1 = 90;
 const int velTrig2 = 120;
 
 // velocity "curves" for interpolation
-const int curve0[] = {0, 16, 32, 48, 64, 80, 96, 112, 127}; //linear
-const int curve1[] = {0, 8, 16, 24, 32, 40, 48, 80, 127};  //almost exp
-const int curve2[] = {0, 2, 6, 8, 16, 36, 64, 96, 127};    //flat min to lin max
-const int curve3[] = {127, 127, 127, 127, 127, 127, 127, 127, 127}; //all max
+int curve0[] = {0, 16, 32, 48, 64, 80, 96, 112, 127}; //linear
+int curve1[] = {0, 8, 16, 24, 32, 40, 48, 80, 127};  //almost exp
+int curve2[] = {0, 2, 6, 8, 16, 36, 64, 96, 127};    //flat min to lin max
+int curve3[] = {127, 127, 127, 127, 127, 127, 127, 127, 127}; //all max
 
 // counter for sequence mode
 int counter[7];
@@ -74,7 +74,7 @@ void setup() {
 
 
   // Scene 0  holding the defaults
-  for (int i = 0; i < sizeof(padSettings); i++) {
+  for (int i = 0; i < 7; i++) {
     padSettings[i] =  {
       10,                               //channnel
       0,                                //curve
@@ -221,9 +221,9 @@ void handleMidiOn(byte padNr, int _velocity) {
   for (int i = 0; i < 4; i++) {
     // if there is a expCC stored
     if (padSettings[padNr].expCC[i] < 128) {
-      if (expr != lastExp[padNr]){
+      if (expr != lastExpr[padNr]){
       usbMIDI.sendControlChange(padSettings[padNr].expCC[i], expr, padSettings[padNr].channel);
-      lastExp[padNr] = expr;
+      lastExpr[padNr] = expr;
       }
     }
   }
@@ -316,9 +316,7 @@ void handleMidiOn(byte padNr, int _velocity) {
         //keep track of the Notenumber to send noteOff
         lastPlayed[padNr] = padSettings[padNr].padNNs[3];
         return;
-      } else {
-        break;      //redundant?
-      }
+      } 
     } else {
       //check if a velTrig2 is set. Then send that NoteNumber with fixed velocity
       if (padSettings[padNr].padNNs[4] < 128)
@@ -330,9 +328,7 @@ void handleMidiOn(byte padNr, int _velocity) {
         //keep track of the Notenumber to send noteOff
         lastPlayed[padNr] = padSettings[padNr].padNNs[4];
         return;
-      } else {
-        break;
-      }
+      } 
     }
   }
 
@@ -340,7 +336,7 @@ void handleMidiOn(byte padNr, int _velocity) {
   usbMIDI.sendNoteOn(padSettings[padNr].padNNs[0], velocity, padSettings[padNr].channel);
   //keep track of the Notenumber to send noteOff
   lastPlayed[padNr] = padSettings[padNr].padNNs[0];
-
+  return;
 }
 /*XXXXXXXXXXXXXXXX handle midi off XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 
