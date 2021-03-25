@@ -40,6 +40,7 @@ int counter[7];
 int lastPlayed[7];
 
 bool sus;
+bool retrigger[7];
 
 int expr;
 int lastExpr[7];
@@ -52,11 +53,11 @@ struct pad_settings {
   uint8_t padNNs[4];    // default, alternative, velTrig1, velTrig2
   uint8_t padSeq[16];   // NNs of Note Sequence
   uint8_t seqMode;      // Sequence mode [off,on,random]
-  uint8_t susMode;      // susPedal mode [altNN, latch expr, holdSeqCounter, restartSeq]
+  uint8_t susMode;      // susPedal mode [altNN, retrigFX, holdSeqCounter, restartSeq]
   uint8_t velCC[4];     // velocity modulation destinations
   uint8_t expCC[4];     // expression modulation destinations
   uint8_t modRng[16];   // min & max for each destination cc,cc,cc,cc,xp,xp,xp,xp
-  int8_t retrigFX[5];   // [(off,on),speed,repeats,pitch,damp]
+  int8_t retrigFX[4];   // [speed,repeats,pitch,damp]
   bool latching;        // noteOff waits for next stroke
 
 } ;
@@ -68,10 +69,10 @@ struct pad_settings padSettings[7];
 /*XXXXXXXXXXXXXXX SETUP XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 
 void setup() {
-  
+
   pinMode (susPin, INPUT_PULLUP);
-  
-  
+
+
   // Scene 0  holding the defaults
   for (int i = 0; i < sizeof(padSettings); i++) {
     padSettings[i] =  {
@@ -88,7 +89,7 @@ void setup() {
       { 0, 127, 0, 127, 0, 127, 0, 127, //modulation ranges
         0, 127, 0, 127, 0, 127, 0, 127
       },
-      {0, 0, 0, 0, 0},                   //retrigger FX
+      {0, 0, 0, 0},                   //retrigger FX
       false
     };
   }
@@ -182,31 +183,30 @@ void peakDetect(int i) {
   }
 }
 
-/*XXXXXXXXXXXXXXXX handle USB Midi XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
+/*XXXXXXXXXXXXXXXX handle midi On XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 
 
 void handleMidiOn(byte padNr, int _velocity) {
 
   int velocity;
 
-
   /*---------------shape velocity data---------------------------------------------------*/
   switch (padSettings[padNr].velCurve) {
     case 0:
       velocity =  _velocity;
-      break;
+      break;  // go on
 
     case 1:
       velocity =  applyCurve(_velocity, curve0, curve1, sizeof(curve0));
-      break;
+      break;  // go on
 
     case 2:
       velocity =  applyCurve(_velocity, curve0, curve2, sizeof(curve0));
-      break;
+      break; // go on
 
     case 3:
       velocity =  applyCurve(_velocity, curve0, curve3, sizeof(curve0));
-      break;
+      break; // go on
   }
 
   /*---------------check for velocityCCs-------------------------------------------------*/
@@ -217,10 +217,22 @@ void handleMidiOn(byte padNr, int _velocity) {
     }
   }
 
+  /*---------------check for expressionCCs------------------------------------------------*/
+  for (int i = 0; i < 4; i++) {
+    // if there is a expCC stored
+    if (padSettings[padNr].expCC[i] < 128) {
+      if (expr != lastExp[padNr]){
+      usbMIDI.sendControlChange(padSettings[padNr].expCC[i], expr, padSettings[padNr].channel);
+      lastExp[padNr] = expr;
+      }
+    }
+  }
+
   /*---------------check sus pedal mode---------------------------------------------------*/
   if (sus) {
     switch (padSettings[padNr].susMode) {
-      case 0:
+
+      case 0://alternative Note Number
         if (padSettings[padNr].latching) {
           usbMIDI.sendNoteOff(lastPlayed[padNr], 0, padSettings[padNr].channel);
         }
@@ -232,15 +244,34 @@ void handleMidiOn(byte padNr, int _velocity) {
         lastPlayed[padNr] = padSettings[padNr].padNNs[1];
         return;
 
-    }
+      case 1://enable Trigger FX
+        retrigger[padNr] = true;
+        break;
 
+      case 2://trigger last seqNote again
+        if (padSettings[padNr].latching) {
+          usbMIDI.sendNoteOff(lastPlayed[padNr], 0, padSettings[padNr].channel);
+        }
+        // in any case send same pad note
+        usbMIDI.sendNoteOn(lastPlayed[padNr],
+                           velocity,
+                           padSettings[padNr].channel);
+        //keep track of the Notenumber to send noteOff
+        lastPlayed[padNr] = padSettings[padNr].padNNs[1];
+        return;
+
+      case 3://reset sequence counter
+        counter[padNr]  = 0;
+        break;
+    }
   }
+
   /*---------------check for sequenceMode-------------------------------------------------*/
   switch (padSettings[padNr].seqMode) {
     case 0:
       break; // go on
 
-    case 1:
+    case 1:  // sequence
       // if latching send noteOff on last Note in the Sequence
       if (padSettings[padNr].latching) {
         usbMIDI.sendNoteOff(lastPlayed[padNr], 0, padSettings[padNr].channel);
@@ -254,10 +285,9 @@ void handleMidiOn(byte padNr, int _velocity) {
       //and take care of the counter
       counter[padNr] ++;
       if (counter[padNr] > 16) counter[padNr] = 0;
-      return; // stop handleOn
+      return; // stop handleMidiOn
 
-
-    case 2:
+    case 2: // random
       long randNum = random(17);
       // if latching send noteOff on last Note in the Sequence
       if (padSettings[padNr].latching) {
@@ -269,9 +299,7 @@ void handleMidiOn(byte padNr, int _velocity) {
                          padSettings[padNr].channel);
       //keep track of the Notenumber to send noteOff
       lastPlayed[padNr] = padSettings[padNr].padSeq[randNum];
-      return;
-
-
+      return; // stop handleMidiOn
   }
 
 
@@ -279,40 +307,47 @@ void handleMidiOn(byte padNr, int _velocity) {
   if (velocity > velTrig1) {
     if (velocity < velTrig2) {
       //check if a velTrig1 is set. Then send that NoteNumber with fixed velocity
-      if (padSettings[padNr].padNNs[3] < 127)
+      if (padSettings[padNr].padNNs[3] < 128)
       {
+        if (padSettings[padNr].latching) {
+          usbMIDI.sendNoteOff(lastPlayed[padNr], 0, padSettings[padNr].channel);
+        }
         usbMIDI.sendNoteOn(padSettings[padNr].padNNs[3], velTrig1, padSettings[padNr].channel);
         //keep track of the Notenumber to send noteOff
         lastPlayed[padNr] = padSettings[padNr].padNNs[3];
-        //if not send the velocity with standard NoteNumber [0]
+        return;
       } else {
-        usbMIDI.sendNoteOn(padSettings[padNr].padNNs[0], velocity, padSettings[padNr].channel);
-        //keep track of the Notenumber to send noteOff
-        lastPlayed[padNr] = padSettings[padNr].padNNs[0];
+        break;      //redundant?
       }
     } else {
       //check if a velTrig2 is set. Then send that NoteNumber with fixed velocity
-      if (padSettings[padNr].padNNs[4] < 127)
+      if (padSettings[padNr].padNNs[4] < 128)
       {
+        if (padSettings[padNr].latching) {
+          usbMIDI.sendNoteOff(lastPlayed[padNr], 0, padSettings[padNr].channel);
+        }
         usbMIDI.sendNoteOn(padSettings[padNr].padNNs[4], velTrig1, padSettings[padNr].channel);
         //keep track of the Notenumber to send noteOff
         lastPlayed[padNr] = padSettings[padNr].padNNs[4];
+        return;
       } else {
-        //if not send the velocity with standard NoteNumber [0]
-        usbMIDI.sendNoteOn(padSettings[padNr].padNNs[0], velocity, padSettings[padNr].channel);
-        //keep track of the Notenumber to send noteOff
-        lastPlayed[padNr] = padSettings[padNr].padNNs[0];
+        break;
       }
     }
-  } else {
-    // if velocity is below velTrig1 also send the velocity with standard NoteNumber [0]
-    usbMIDI.sendNoteOn(padSettings[padNr].padNNs[0], velocity, padSettings[padNr].channel);
-    //keep track of the Notenumber to send noteOff
-    lastPlayed[padNr] = padSettings[padNr].padNNs[0];
   }
 
+  // if nothing of the above applied
+  usbMIDI.sendNoteOn(padSettings[padNr].padNNs[0], velocity, padSettings[padNr].channel);
+  //keep track of the Notenumber to send noteOff
+  lastPlayed[padNr] = padSettings[padNr].padNNs[0];
 
 }
+/*XXXXXXXXXXXXXXXX handle midi off XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
+
+void handleMidiOff(byte padNr){
+  
+}
+
 /*XXXXXXXXXXXXXXXX curve interpolation XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 
 int applyCurve(int val, int* _in, int* _out, uint8_t size)
