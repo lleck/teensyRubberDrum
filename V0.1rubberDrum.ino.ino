@@ -11,7 +11,8 @@
 
 
 const int drumPINS = 7;     // number of drum signals incoming
-
+const int expPin = A0;
+const int susPin = 2;
 
 const int analogPin[drumPINS] = {A1, A2, A3, A6, A7, A8, A9}; //array of analog PINs
 const int thresholdMin = 60;  // minimum reading, avoid noise and false starts
@@ -23,20 +24,25 @@ int peak[drumPINS];   // remember the highest reading
 int piezo[drumPINS];
 elapsedMillis msec[drumPINS]; // timers to end states 1 and 2
 
-int velTrig1 = 90;
-int velTrig2 = 120;
+const int velTrig1 = 90;
+const int velTrig2 = 120;
 
 // velocity "curves" for interpolation
-int curve0[] = {0, 16, 32, 48, 64, 80, 96, 112, 127}; //linear
-int curve1[] = {0, 8, 16, 24, 32, 40, 48, 80, 127};  //almost exp
-int curve2[] = {0, 2, 6, 8, 16, 36, 64, 96, 127};    //flat min to lin max
-int curve3[] = {127, 127, 127, 127, 127, 127, 127, 127, 127}; //all max
+const int curve0[] = {0, 16, 32, 48, 64, 80, 96, 112, 127}; //linear
+const int curve1[] = {0, 8, 16, 24, 32, 40, 48, 80, 127};  //almost exp
+const int curve2[] = {0, 2, 6, 8, 16, 36, 64, 96, 127};    //flat min to lin max
+const int curve3[] = {127, 127, 127, 127, 127, 127, 127, 127, 127}; //all max
 
 // counter for sequence mode
-int counter[7] = {0, 0, 0, 0, 0, 0, 0};
+int counter[7];
 
 // last played note on pad
 int lastPlayed[7];
+
+bool sus;
+
+int expr;
+int lastExpr[7];
 
 /*XXXXXXXXXXXXXX definition of  padSettings XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 struct pad_settings {
@@ -62,7 +68,10 @@ struct pad_settings padSettings[7];
 /*XXXXXXXXXXXXXXX SETUP XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 
 void setup() {
-
+  
+  pinMode (susPin, INPUT_PULLUP);
+  
+  
   // Scene 0  holding the defaults
   for (int i = 0; i < sizeof(padSettings); i++) {
     padSettings[i] =  {
@@ -116,12 +125,16 @@ void loop() {
     // Add other tasks to loop, but avoid using delay() or waiting.
     // You need loop() to keep running rapidly to detect Piezo peaks!
 
+
   }
+  expr = analogRead(expPin);
+  sus = digitalRead(susPin);
   // MIDI Controllers should discard incoming MIDI messages.
   // http://forum.pjrc.com/threads/24179-Teensy-3-Ableton-Analog-CC-causes-midi-crash
   while (usbMIDI.read()) {
     // ignore incoming messages
   }
+
 }
 
 /*XXXXXXXXXXXXXXXX Peak Detect XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
@@ -175,30 +188,57 @@ void peakDetect(int i) {
 void handleMidiOn(byte padNr, int _velocity) {
 
   int velocity;
-  /*---------------shape velocity data---------------------------------------------------*/
 
+
+  /*---------------shape velocity data---------------------------------------------------*/
   switch (padSettings[padNr].velCurve) {
     case 0:
       velocity =  _velocity;
-      return;
+      break;
 
     case 1:
       velocity =  applyCurve(_velocity, curve0, curve1, sizeof(curve0));
-      return;
+      break;
 
     case 2:
       velocity =  applyCurve(_velocity, curve0, curve2, sizeof(curve0));
-      return;
+      break;
 
     case 3:
       velocity =  applyCurve(_velocity, curve0, curve3, sizeof(curve0));
-      return;
+      break;
   }
 
+  /*---------------check for velocityCCs-------------------------------------------------*/
+  for (int i = 0; i < 4; i++) {
+    // if there is a velCC stored
+    if (padSettings[padNr].velCC[i] < 128) {
+      usbMIDI.sendControlChange(padSettings[padNr].velCC[i], velocity, padSettings[padNr].channel);
+    }
+  }
+
+  /*---------------check sus pedal mode---------------------------------------------------*/
+  if (sus) {
+    switch (padSettings[padNr].susMode) {
+      case 0:
+        if (padSettings[padNr].latching) {
+          usbMIDI.sendNoteOff(lastPlayed[padNr], 0, padSettings[padNr].channel);
+        }
+        // in any case send alternative pad note
+        usbMIDI.sendNoteOn(padSettings[padNr].padNNs[1],
+                           velocity,
+                           padSettings[padNr].channel);
+        //keep track of the Notenumber to send noteOff
+        lastPlayed[padNr] = padSettings[padNr].padNNs[1];
+        return;
+
+    }
+
+  }
   /*---------------check for sequenceMode-------------------------------------------------*/
   switch (padSettings[padNr].seqMode) {
     case 0:
-      return;
+      break; // go on
 
     case 1:
       // if latching send noteOff on last Note in the Sequence
@@ -214,7 +254,7 @@ void handleMidiOn(byte padNr, int _velocity) {
       //and take care of the counter
       counter[padNr] ++;
       if (counter[padNr] > 16) counter[padNr] = 0;
-      return;
+      return; // stop handleOn
 
 
     case 2:
@@ -232,14 +272,6 @@ void handleMidiOn(byte padNr, int _velocity) {
       return;
 
 
-  }
-
-  /*---------------check for velocityCCs-------------------------------------------------*/
-  for (int i = 0; i < 4; i++) {
-    // if there is a velCC stored
-    if (padSettings[padNr].velCC[i] < 128) {
-      usbMIDI.sendControlChange(padSettings[padNr].velCC[i], velocity, padSettings[padNr].channel);
-    }
   }
 
 
