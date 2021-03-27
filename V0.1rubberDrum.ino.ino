@@ -10,11 +10,12 @@
   XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 
 
-const int drumPINS = 7;     // number of drum signals incoming
+const int drumPINS = 8;     // number of drum signals incoming
 const int expPin = A0;
 const int susPin = 2;
+const int slrPin = A11;
 
-const int analogPin[drumPINS] = {A1, A2, A3, A6, A7, A8, A9}; //array of analog PINs
+const int analogPin[drumPINS] = {A1, A2, A3, A6, A7, A8, A9, A10}; //array of analog PINs
 const int thresholdMin = 60;  // minimum reading, avoid noise and false starts
 const int peakTrackMillis = 12;
 const int aftershockMillis = 25; // aftershocks & vibration reject
@@ -34,16 +35,18 @@ int curve2[] = {0, 2, 6, 8, 16, 36, 64, 96, 127};    //flat min to lin max
 int curve3[] = {127, 127, 127, 127, 127, 127, 127, 127, 127}; //all max
 
 // counter for sequence mode
-int counter[7];
+int counter[drumPINS];
 
 // last played note on pad
-int lastPlayed[7];
+int lastPlayed[drumPINS];
 
 bool sus;
-bool retrigger[7];
+bool retrigger[drumPINS];
 
+// expression Pedal
+int solar;
 int expr;
-int lastExpr[7];
+int lastExpr[drumPINS];
 
 /*XXXXXXXXXXXXXX definition of  padSettings XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 struct pad_settings {
@@ -56,25 +59,28 @@ struct pad_settings {
   uint8_t susMode;      // susPedal mode [altNN, retrigFX, holdSeqCounter, restartSeq]
   uint8_t velCC[4];     // velocity modulation destinations
   uint8_t expCC[4];     // expression modulation destinations
-  uint8_t modRng[16];   // min & max for each destination cc,cc,cc,cc,xp,xp,xp,xp
+  uint8_t velMin[4];   // min & max for each destination
+  uint8_t velMax[4];   // min & max for each destination
+  uint8_t expMin[4];   // min & max for each destination
+  uint8_t expMax[4];   // min & max for each destination
   int8_t retrigFX[4];   // [speed,repeats,pitch,damp]
   bool latching;        // noteOff waits for next stroke
 
 } ;
 
-// an array of settings struct for each of 7 pads (update to eeprom as scenes ?)
-struct pad_settings padSettings[7];
+// an array of settings struct for each of 8 pads (update to eeprom as scenes ?)
+struct pad_settings padSettings[drumPINS];
 
 
 /*XXXXXXXXXXXXXXX SETUP XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 
 void setup() {
-
+  //Serial.begin(115200);
   pinMode (susPin, INPUT_PULLUP);
 
 
   // Scene 0  holding the defaults
-  for (int i = 0; i < 7; i++) {
+  for (int i = 0; i < drumPINS; i++) {
     padSettings[i] =  {
       10,                               //channnel
       0,                                //curve
@@ -86,11 +92,12 @@ void setup() {
       0,                                //sustain pedal mode
       {10, 255, 255, 255},              //velocity CCs
       {2, 255, 255, 255},               //expression CCs
-      { 0, 127, 0, 127, 0, 127, 0, 127, //modulation ranges
-        0, 127, 0, 127, 0, 127, 0, 127
-      },
-      {0, 0, 0, 0},                   //retrigger FX
-      false
+      { 0,   0,   0,   0},              //velMin
+      { 127, 127, 127, 127},            //velMax
+      { 0,   0,   0,   0},              //expMin
+      { 127, 127, 127, 127},            //expMax
+      {0, 0, 0, 0},                     //retrigger FX
+      false                             //latching?
     };
   }
 }
@@ -117,8 +124,8 @@ void setup() {
   XXXXXXXXXXXXXXXX LOOP XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 
 void loop() {
-
-  for (int i = 0; i < drumPINS; i++) {
+  /*
+    for (int i = 0; i < drumPINS; i++) {
     //delay(20);
     piezo[i] = analogRead(analogPin[i]);
 
@@ -127,9 +134,18 @@ void loop() {
     // You need loop() to keep running rapidly to detect Piezo peaks!
 
 
-  }
+    }
+  */
   expr = analogRead(expPin);
   sus = digitalRead(susPin);
+  solar = analogRead(slrPin);
+
+  //  Serial.print(expr);
+  //  Serial.print("\t");
+  //  Serial.print(susPin);
+  //  Serial.print("\t");
+  //  Serial.println(solar);
+
   // MIDI Controllers should discard incoming MIDI messages.
   // http://forum.pjrc.com/threads/24179-Teensy-3-Ableton-Analog-CC-causes-midi-crash
   while (usbMIDI.read()) {
@@ -213,7 +229,11 @@ void handleMidiOn(byte padNr, int _velocity) {
   for (int i = 0; i < 4; i++) {
     // if there is a velCC stored
     if (padSettings[padNr].velCC[i] < 128) {
-      usbMIDI.sendControlChange(padSettings[padNr].velCC[i], velocity, padSettings[padNr].channel);
+      int vlct = map(velocity, 0, 127,
+                     padSettings[padNr].velMin[i],
+                     padSettings[padNr].velMax[i],
+                    );
+      usbMIDI.sendControlChange(padSettings[padNr].velCC[i], vlct, padSettings[padNr].channel);
     }
   }
 
@@ -221,9 +241,14 @@ void handleMidiOn(byte padNr, int _velocity) {
   for (int i = 0; i < 4; i++) {
     // if there is a expCC stored
     if (padSettings[padNr].expCC[i] < 128) {
-      if (expr != lastExpr[padNr]){
-      usbMIDI.sendControlChange(padSettings[padNr].expCC[i], expr, padSettings[padNr].channel);
-      lastExpr[padNr] = expr;
+      // if the foot is on the pedal and the cc value changed
+      if (solar < 5 && expr != lastExpr[padNr]) {
+        int xprss = map(expr, 0, 1023,
+                        padSettings[padNr].expMin[i],
+                        padSettings[padNr].expMax[i],
+                       );
+        usbMIDI.sendControlChange(padSettings[padNr].expCC[i], xprss, padSettings[padNr].channel);
+        lastExpr[padNr] = expr;
       }
     }
   }
@@ -316,7 +341,7 @@ void handleMidiOn(byte padNr, int _velocity) {
         //keep track of the Notenumber to send noteOff
         lastPlayed[padNr] = padSettings[padNr].padNNs[3];
         return;
-      } 
+      }
     } else {
       //check if a velTrig2 is set. Then send that NoteNumber with fixed velocity
       if (padSettings[padNr].padNNs[4] < 128)
@@ -328,7 +353,7 @@ void handleMidiOn(byte padNr, int _velocity) {
         //keep track of the Notenumber to send noteOff
         lastPlayed[padNr] = padSettings[padNr].padNNs[4];
         return;
-      } 
+      }
     }
   }
 
@@ -340,8 +365,8 @@ void handleMidiOn(byte padNr, int _velocity) {
 }
 /*XXXXXXXXXXXXXXXX handle midi off XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 
-void handleMidiOff(byte padNr){
-  
+void handleMidiOff(byte padNr) {
+
 }
 
 /*XXXXXXXXXXXXXXXX curve interpolation XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
