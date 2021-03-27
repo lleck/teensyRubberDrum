@@ -8,6 +8,8 @@
 
   The curveApply function is basically a copy of Rob Tillaart's multiMap function
   XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
+#include <SD.h>
+#include <SPI.h>
 
 
 const int drumPINS = 8;     // number of drum signals incoming
