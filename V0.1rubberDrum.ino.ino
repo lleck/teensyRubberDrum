@@ -193,7 +193,7 @@ void peakDetect(int i) {
       if (piezo[i] > thresholdMin) {
         msec[i] = 0; // keep resetting timer if above threshold
       } else if (msec[i] > aftershockMillis) {
-        //**************************************usbMIDI.sendNoteOff(note[i], 0, channel);
+        handleMidiOff(i);
         state[i] = 0; // go back to idle when
       }
   }
@@ -231,8 +231,7 @@ void handleMidiOn(byte padNr, int _velocity) {
     if (padSettings[padNr].velCC[i] < 128) {
       int vlct = map(velocity, 0, 127,
                      padSettings[padNr].velMin[i],
-                     padSettings[padNr].velMax[i],
-                    );
+                     padSettings[padNr].velMax[i]);
       usbMIDI.sendControlChange(padSettings[padNr].velCC[i], vlct, padSettings[padNr].channel);
     }
   }
@@ -245,8 +244,7 @@ void handleMidiOn(byte padNr, int _velocity) {
       if (solar < 5 && expr != lastExpr[padNr]) {
         int xprss = map(expr, 0, 1023,
                         padSettings[padNr].expMin[i],
-                        padSettings[padNr].expMax[i],
-                       );
+                        padSettings[padNr].expMax[i]);
         usbMIDI.sendControlChange(padSettings[padNr].expCC[i], xprss, padSettings[padNr].channel);
         lastExpr[padNr] = expr;
       }
@@ -366,9 +364,10 @@ void handleMidiOn(byte padNr, int _velocity) {
 /*XXXXXXXXXXXXXXXX handle midi off XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 
 void handleMidiOff(byte padNr) {
-
+  if (!padSettings[padNr].latching) {
+    usbMIDI.sendNoteOff(lastPlayed[padNr], 0, padSettings[padNr].channel);
+  } else {return;}
 }
-
 /*XXXXXXXXXXXXXXXX curve interpolation XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 
 int applyCurve(int val, int* _in, int* _out, uint8_t size)
