@@ -10,7 +10,58 @@
   XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 #include <SD.h>
 #include <SPI.h>
+#include <LiquidCrystal_I2C.h>
+#include <Encoder.h>
 
+#define encoder_A_pin       11
+#define encoder_B_pin       12
+#define encoder_button_pin  10    // use internal pullup
+
+#define button_long_press    800   // ms
+#define button_short_press   80   // ms
+
+LiquidCrystal_I2C lcd(0x27, 40, 2);
+Encoder ENCODER(encoder_A_pin, encoder_B_pin);
+
+unsigned long  button_press_time = millis();
+
+
+
+/*XXXXXXXXXX Menu & Screens Vars XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
+
+uint8_t curser_pos = 0;
+uint8_t numOfHeadScreens = 3;
+uint8_t numOfSubScreens = 10;
+uint8_t currentHeadScreen = 0;
+uint8_t currentSubScreen = 0;
+
+uint8_t selected_pad = 1;
+
+bool subMenu = LOW;
+bool editParam = LOW;
+
+
+
+String headMenu[numOfHeadScreens][3] = {
+  {"Midi Note Out", "Vel Note Mapping", "Expression Dest"},
+  {"Velocity Dest", "Expression Limits", "Velocity Limits"},
+  {"Retrigger Effect", "Pedal & Seq Modes", "Pad Sequence"}
+};
+
+String subMenu[numOfSubScreens][4] = {
+  {"PadChannel", "PadCurve", "PadNote", "Alt Note"},
+  {"VelTrig1", "VelTrig2", "Treshold1", "Treshold2"},
+  {"VelCC1", "VelCC2", "VelCC3", "VelCC4"},
+  {"ExpCC1", "ExpCC2", "ExpCC3", "ExpCC4"},
+  {"Vel1 min", "Vel1 max", "Vel2 min", "Vel2 max"},
+  {"Vel3 min", "Vel3 max", "Vel4 min", "Vel4 max"},
+  {"Exp1 min", "Exp1 max", "Exp2 min", "Exp2 max"},
+  {"Exp3 min", "Exp3 max", "Exp4 min", "Exp4 max"},
+  {"Speed", "Repeats", "Pitch", "Damp"},
+  {"SeqMode", "SusMode", "Latch", " "},
+};
+
+/*XXXXXXXXXX Drum Logic Vars XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 
 const int drumPINS = 8;     // number of drum signals incoming
 const int expPin = A0;
@@ -56,6 +107,7 @@ struct pad_settings {
   uint8_t channel;      // midi Channel to send to
   uint8_t velCurve;     // ID of table containing the curve
   uint8_t padNNs[4];    // default, alternative, velTrig1, velTrig2
+  uint8_t velTres[2];   // treshold for velocity trigs
   uint8_t padSeq[16];   // NNs of Note Sequence
   uint8_t seqMode;      // Sequence mode [off,on,random]
   uint8_t susMode;      // susPedal mode [altNN, retrigFX, holdSeqCounter, restartSeq]
@@ -79,7 +131,11 @@ struct pad_settings padSettings[drumPINS];
 void setup() {
   //Serial.begin(115200);
   pinMode (susPin, INPUT_PULLUP);
+  pinMode(encoder_button_pin  , INPUT_PULLUP);
 
+  lcd.init();
+  lcd.backlight();
+  lcd.begin(40, 2);
 
   // Scene 0  holding the defaults
   for (int i = 0; i < drumPINS; i++) {
@@ -87,6 +143,7 @@ void setup() {
       10,                               //channnel
       0,                                //curve
       {60, 64, 128, 128},               //noteNumbers
+      {90, 120},                        //velTreshold
       { 60, 60, 60, 64, 60, 60, 60, 64, //sequence
         60, 60, 60, 64, 60, 60, 60, 64
       },
@@ -126,8 +183,8 @@ void setup() {
   XXXXXXXXXXXXXXXX LOOP XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 
 void loop() {
-  
-    for (int i = 0; i < drumPINS; i++) {
+
+  for (int i = 0; i < drumPINS; i++) {
     //delay(20);
     piezo[i] = analogRead(analogPin[i]);
 
@@ -136,8 +193,8 @@ void loop() {
     // You need loop() to keep running rapidly to detect Piezo peaks!
 
 
-    }
-  
+  }
+
   expr = analogRead(expPin);
   sus = digitalRead(susPin);
   solar = analogRead(slrPin);
@@ -149,9 +206,8 @@ void loop() {
   //  Serial.println(solar);
 
   // MIDI Controllers should discard incoming MIDI messages.
-  // http://forum.pjrc.com/threads/24179-Teensy-3-Ableton-Analog-CC-causes-midi-crash
   while (usbMIDI.read()) {
-    // ignore incoming messages
+    // ignore incoming messages, do nothing
   }
 
 }
@@ -368,7 +424,9 @@ void handleMidiOn(byte padNr, int _velocity) {
 void handleMidiOff(byte padNr) {
   if (!padSettings[padNr].latching) {
     usbMIDI.sendNoteOff(lastPlayed[padNr], 0, padSettings[padNr].channel);
-  } else {return;}
+  } else {
+    return;
+  }
 }
 /*XXXXXXXXXXXXXXXX curve interpolation XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 
@@ -388,4 +446,179 @@ int applyCurve(int val, int* _in, int* _out, uint8_t size)
 
   // interpolate in the right segment for the rest
   return (val - _in[pos - 1]) * (_out[pos] - _out[pos - 1]) / (_in[pos] - _in[pos - 1]) + _out[pos - 1];
+}
+
+/*XXXXXXXXXXXXXXXX encoder input handler XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
+
+
+
+/*XXXXXXXXXXXXXXXX print Screen XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
+
+void printScreen() {
+
+  if (!subMenu) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Pad:" + " " + selected_pad);
+    lcd.setCursor(20, 0);
+    lcd.print(headMenu[currentHeadScreen][1]);
+    lcd.setCursor(0, 1);
+    lcd.print(headMenu[currentHeadScreen][2]);
+    lcd.setCursor(20, 1);
+    lcd.print(headMenu[currentHeadScreen][3]);
+  }
+  if (subMenu) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(subMenu[currentSubScreen][1]);
+    lcd.setCursor(10, 0);
+    lcd.print(subMenu[currentSubScreen][2]);
+    lcd.setCursor(20, 0);
+    lcd.print(subMenu[currentSubScreen][3]);
+    lcd.setCursor(30, 0);
+    lcd.print(subMenu[currentSubScreen][4]);
+
+
+    if (currentSubScreen == 1) {
+      lcd.setCursor(0, 1);
+      lcd.print(padSettings[selected_pad].channel);
+      lcd.setCursor(10, 1);
+      lcd.print(padSettings[selected_pad].velCurve);
+      lcd.setCursor(20, 1);
+      lcd.print(padSettings[selected_pad].padNNs[1]);
+      lcd.setCursor(30, 1);
+      lcd.print(padSettings[selected_pad].padNNs[2]);
+    }
+    if (currentSubScreen == 2) {
+      lcd.setCursor(0, 1);
+      if (padSettings[selected_pad].padNNs[3] < 128) {
+        lcd.print(padSettings[selected_pad].padNNs[3]);
+      } else {
+        lcd.print("OFF");
+      }
+      lcd.setCursor(10, 1);
+      if (padSettings[selected_pad].padNNs[4] < 128) {
+        lcd.print(padSettings[selected_pad].padNNs[4]);
+      } else {
+        lcd.print("OFF");
+      }
+      lcd.setCursor(20, 1);
+      lcd.print(padSettings[selected_pad].velTres[1]);
+      lcd.setCursor(30, 1);
+      lcd.print(padSettings[selected_pad].velTres[2]);
+    }
+    if (currentSubScreen == 3) {
+      lcd.setCursor(0, 1);
+      if (padSettings[selected_pad].velCC[1] < 128) {
+        lcd.print(padSettings[selected_pad].velCC[1]);
+      } else {
+        lcd.print("OFF");
+      }
+      lcd.setCursor(10, 1);
+      if (padSettings[selected_pad].velCC[2] < 128) {
+        lcd.print(padSettings[selected_pad].velCC[2]);
+      } else {
+        lcd.print("OFF");
+      }
+      lcd.setCursor(20, 1);
+      if (padSettings[selected_pad].velCC[3] < 128) {
+        lcd.print(padSettings[selected_pad].velCC[3]);
+      } else {
+        lcd.print("OFF");
+      }
+      lcd.setCursor(30, 1);
+      if (padSettings[selected_pad].velCC[4] < 128) {
+        lcd.print(padSettings[selected_pad].velCC[4]);
+      } else {
+        lcd.print("OFF");
+      }
+    }
+    if (currentSubScreen == 4) {
+      lcd.setCursor(0, 1);
+      if (padSettings[selected_pad].expCC[1] < 128) {
+        lcd.print(padSettings[selected_pad].expCC[1]);
+      } else {
+        lcd.print("OFF");
+      }
+      lcd.setCursor(10, 1);
+      if (padSettings[selected_pad].expCC[2] < 128) {
+        lcd.print(padSettings[selected_pad].expCC[2]);
+      } else {
+        lcd.print("OFF");
+      }
+      lcd.setCursor(20, 1);
+      if (padSettings[selected_pad].expCC[3] < 128) {
+        lcd.print(padSettings[selected_pad].expCC[3]);
+      } else {
+        lcd.print("OFF");
+      }
+      lcd.setCursor(30, 1);
+      if (padSettings[selected_pad].expCC[4] < 128) {
+        lcd.print(padSettings[selected_pad].expCC[4]);
+      } else {
+        lcd.print("OFF");
+      }
+    }
+    if (currentSubScreen == 5) {
+      lcd.setCursor(0, 1);
+      lcd.print(padSettings[selected_pad].velMin[1]);
+      lcd.setCursor(10, 1);
+      lcd.print(padSettings[selected_pad].velMax[1]);
+      lcd.setCursor(20, 1);
+      lcd.print(padSettings[selected_pad].velMin[2]);
+      lcd.setCursor(30, 1);
+      lcd.print(padSettings[selected_pad].velMax[2]);
+    }
+    if (currentSubScreen == 6) {
+      lcd.setCursor(0, 1);
+      lcd.print(padSettings[selected_pad].velMin[3]);
+      lcd.setCursor(10, 1);
+      lcd.print(padSettings[selected_pad].velMax[3]);
+      lcd.setCursor(20, 1);
+      lcd.print(padSettings[selected_pad].velMin[4]);
+      lcd.setCursor(30, 1);
+      lcd.print(padSettings[selected_pad].velMax[4]);
+    }
+    if (currentSubScreen == 7) {
+      lcd.setCursor(0, 1);
+      lcd.print(padSettings[selected_pad].expMin[1]);
+      lcd.setCursor(10, 1);
+      lcd.print(padSettings[selected_pad].expMax[1]);
+      lcd.setCursor(20, 1);
+      lcd.print(padSettings[selected_pad].expMin[2]);
+      lcd.setCursor(30, 1);
+      lcd.print(padSettings[selected_pad].expMax[2]);
+    }
+    if (currentSubScreen == 8) {
+      lcd.setCursor(0, 1);
+      lcd.print(padSettings[selected_pad].expMin[3]);
+      lcd.setCursor(10, 1);
+      lcd.print(padSettings[selected_pad].expMax[3]);
+      lcd.setCursor(20, 1);
+      lcd.print(padSettings[selected_pad].expMin[4]);
+      lcd.setCursor(30, 1);
+      lcd.print(padSettings[selected_pad].expMax[4]);
+    }
+    if (currentSubScreen == 9) {
+      lcd.setCursor(0, 1);
+      lcd.print(padSettings[selected_pad].velMin[3]);
+      lcd.setCursor(10, 1);
+      lcd.print(padSettings[selected_pad].velMax[3]);
+      lcd.setCursor(20, 1);
+      lcd.print(padSettings[selected_pad].velMin[4]);
+      lcd.setCursor(30, 1);
+      lcd.print(padSettings[selected_pad].velMax[4]);
+    }
+    if (currentSubScreen == 10) {
+      lcd.setCursor(0, 1);
+      lcd.print(padSettings[selected_pad].velMin[3]);
+      lcd.setCursor(10, 1);
+      lcd.print(padSettings[selected_pad].velMax[3]);
+      lcd.setCursor(20, 1);
+      lcd.print(padSettings[selected_pad].velMin[4]);
+      lcd.setCursor(30, 1);
+      lcd.print(padSettings[selected_pad].velMax[4]);
+    }
+
+  }
 }
