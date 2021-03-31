@@ -599,6 +599,7 @@ void printScreen() {
       lcd.setCursor(30, 1);
       lcd.print(padSettings[selected_pad].expMax[4]);
     }
+    //HLIASBDVCÖJIBASDCOABSDCVHASÖCOBAÖKISBCAOISCHBVLÖIAUSHC
     if (currentSubScreen == 9) {
       lcd.setCursor(0, 1);
       lcd.print(padSettings[selected_pad].velMin[3]);
