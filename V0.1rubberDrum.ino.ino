@@ -126,7 +126,7 @@ void setup() {
   XXXXXXXXXXXXXXXX LOOP XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX*/
 
 void loop() {
-  /*
+  
     for (int i = 0; i < drumPINS; i++) {
     //delay(20);
     piezo[i] = analogRead(analogPin[i]);
@@ -137,7 +137,7 @@ void loop() {
 
 
     }
-  */
+  
   expr = analogRead(expPin);
   sus = digitalRead(susPin);
   solar = analogRead(slrPin);
